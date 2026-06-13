@@ -15,7 +15,8 @@ config, so support for other monitors can be added with **no code changes**.
 | Download  | **479 KB** | 404 MB               |
 | Installed | **523 KB** | 936 MB               |
 
-…roughly **800× smaller**, for the controls you actually use.
+…about **860× smaller to download** and **over 1,800× smaller installed**, for the
+controls you actually use.
 
 ## Requirements
 
