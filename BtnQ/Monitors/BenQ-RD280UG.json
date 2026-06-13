@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "name": "BenQ RD280UG",
+  "match": ["RD280U", "RD280UG"],
+  "comment": "DDC/VCP map for the BenQ RD280UG. Group/section order mirrors the monitor's own OSD menu. 'vcp' and hex string values are hexadecimal; plain JSON numbers are decimal. Drop additional <model>.json files into ~/Library/Application Support/BtnQ/Monitors/ to add monitors with no code changes.",
+  "controls": [
+    { "kind": "group", "label": "Coding Booster" },
+    { "kind": "section", "label": "Moon Halo" },
+    { "kind": "cycle", "label": "Moon Halo", "vcp": "d7", "noRead": true, "noVerify": true,
+      "options": [
+        { "value": "0x30", "label": "Auto" },
+        { "value": "0x20", "label": "On" },
+        { "value": "0x10", "label": "Off" }
+      ] },
+    { "kind": "range", "label": "Brightness", "vcp": "d9", "byte": "low", "min": 1, "max": 10,
+      "disableWhen": { "vcp": "d7", "equals": "0x30" } },
+    { "kind": "range", "label": "Color Temperature", "vcp": "d9", "byte": "high", "min": 1, "max": 7 },
+
+    { "kind": "group", "label": "Eye Care" },
+    { "kind": "section", "label": "Night Hours Protection" },
+    { "kind": "cycle", "label": "Night Mode", "vcp": "d1",
+      "options": [
+        { "value": 2, "label": "Auto" },
+        { "value": 1, "label": "On" },
+        { "value": 0, "label": "Off" }
+      ] },
+    { "kind": "range", "label": "Night Level", "vcp": "d0", "min": 1, "max": 10 },
+    { "kind": "section", "label": "Low Blue Light" },
+    { "kind": "range", "label": "Low Blue Light", "vcp": "19", "min": 0, "max": 5,
+      "hideWhen": { "vcp": "dc", "equalsAny": ["0x0a"], "system": "hdr" } },
+    { "kind": "section", "label": "Visual Optimizer" },
+    { "kind": "toggle", "label": "Auto Brightness", "vcp": "e2", "onValue": 255, "offValue": 0, "noRead": true,
+      "hideWhen": { "vcp": "dc", "equalsAny": ["0x0a"], "system": "hdr" } },
+    { "kind": "range", "label": "Sensitivity", "vcp": "e5", "min": 1, "max": 10,
+      "hideWhen": { "vcp": "dc", "equalsAny": ["0x0a"], "system": "hdr" } },
+
+    { "kind": "group", "label": "Color Mode" },
+    { "kind": "cycle", "label": "Color Mode", "vcp": "dc",
+      "options": [
+        { "value": "0x30", "label": "Coding - Dark Theme" },
+        { "value": "0x31", "label": "Coding - Light Theme" },
+        { "value": "0x3a", "label": "Coding - Paper Color" },
+        { "value": "0x0f", "label": "M-book" },
+        { "value": "0x32", "label": "Cinema" },
+        { "value": "0x28", "label": "Game" },
+        { "label": "HDR", "hdr": true },
+        { "value": "0x1f", "label": "ePaper" },
+        { "value": "0x0a", "label": "sRGB" },
+        { "value": "0x12", "label": "User" }
+      ] },
+    { "kind": "range", "label": "Brightness", "vcp": "10", "min": 0, "max": 100,
+      "hideWhen": { "system": "hdr" } },
+    { "kind": "range", "label": "Contrast", "vcp": "12", "min": 0, "max": 100,
+      "hideWhen": { "system": "hdr" } },
+
+    { "kind": "group", "label": "Audio" },
+    { "kind": "range", "label": "Volume", "vcp": "62", "min": 0, "max": 50 },
+
+    { "kind": "group", "label": "Input" },
+    { "kind": "cycle", "label": "Source", "vcp": "60",
+      "options": [
+        { "value": "0x0f", "label": "DisplayPort" },
+        { "value": "0x11", "label": "HDMI" },
+        { "value": "0x13", "label": "USB-C" }
+      ] }
+  ]
+}
