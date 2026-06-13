@@ -10,10 +10,10 @@ config, so support for other monitors can be added with **no code changes**.
 
 ## BtnQ vs BenQ Display Pilot 2
 
-|           | BtnQ       | BenQ Display Pilot 2 |
-|-----------|-----------:|---------------------:|
-| Download  | **479 KB** | 404 MB               |
-| Installed | **523 KB** | 936 MB               |
+|           | BtnQ       | Display Pilot 2 |
+|-----------|:----------:|:---------------:|
+| Download  | **479 KB** | 404 MB          |
+| Installed | **523 KB** | 936 MB          |
 
 …about **860× smaller to download** and **over 1,800× smaller installed**, for the
 controls you actually use.
