@@ -92,7 +92,10 @@ create_dmg() {
     rm -f "$DMG_PATH"
     local stage="$BUILD_DIR/dmg"
     rm -rf "$stage"; mkdir -p "$stage"
-    cp -R "$APP_PATH" "$stage/"
+    # HFS+ (decmpfs) compress the app: it survives into the DMG (smaller download)
+    # and through a Finder/NSFileManager drag-install (smaller on disk). Transparent,
+    # so the code signature and stapled ticket are unaffected.
+    ditto --hfsCompression "$APP_PATH" "$stage/$APP_NAME.app"
     ln -s /Applications "$stage/Applications"   # drag-to-install
     hdiutil create -volname "$APP_NAME" -srcfolder "$stage" -ov -format UDZO "$DMG_PATH"
     rm -rf "$stage"
