@@ -1,12 +1,21 @@
 # BtnQ
 
 A tiny macOS menu-bar app to control a BenQ monitor over DDC/CI — no settings
-window, no 800 MB helper, just standard macOS menus.
+window, no ~1 GB control panel, just standard macOS menus.
 
 Built for the **BenQ RD280UG**, but every monitor-specific detail lives in a JSON
 config, so support for other monitors can be added with **no code changes**.
 
 <img width="472" height="536" alt="BtnQ Light Mode" src="https://github.com/user-attachments/assets/6e3e6b7a-fd4c-4bd3-bb48-cf05da2d98e3" /> <img width="472" height="536" alt="BtnQ Dark Mode" src="https://github.com/user-attachments/assets/6df68a1a-b997-4fb8-a16e-4915e1dd0b81" />
+
+## BtnQ vs BenQ Display Pilot 2
+
+|           | BtnQ       | BenQ Display Pilot 2 |
+|-----------|-----------:|---------------------:|
+| Download  | **479 KB** | 404 MB               |
+| Installed | **523 KB** | 936 MB               |
+
+…roughly **800× smaller**, for the controls you actually use.
 
 ## Requirements
 
