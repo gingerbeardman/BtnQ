@@ -108,4 +108,10 @@ current value of every candidate VCP code, decoded against the config:
 BtnQ is built directly on these two projects:
 
 - **[AppleSiliconDDC](https://github.com/waydabber/AppleSiliconDDC)** by [@waydabber](https://github.com/waydabber) (MIT) — the DDC/CI transport, vendored into BtnQ.
-- **[bebenqli](https://github.com/iurev/bebenqli)** by [@iurev](https://github.com/iurev) — the BenQ RD280UG DDC/VCP map and the baseline-sweep discovery behind Listen mode.
+- **[bebenqli](https://github.com/iurev/bebenqli)** by [@iurev](https://github.com/iurev) (MIT) — the BenQ RD280UG DDC/VCP map and the baseline-sweep discovery behind Listen mode.
+
+## License
+
+BtnQ is released under the [MIT License](LICENSE). Both vendored/ported
+components above are also MIT-licensed; their notices are reproduced in the
+[`LICENSE`](LICENSE) file.
