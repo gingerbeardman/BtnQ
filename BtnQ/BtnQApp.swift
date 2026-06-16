@@ -354,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Add / share monitor support. Teach is always enabled (its purpose is to
         // support a monitor that matches no config yet); the others need a display.
         add("Set Up This Monitor…", #selector(openTeach))
-        add("Submit to Community…", #selector(openSubmit), enabled: active != nil)
+        add("Submit to Community…", #selector(openSubmit), enabled: activeHasUserProfile())
         // Raw VCP change log — a developer diagnostic, not needed by end users now
         // that the Teach wizard exists. Debug builds only.
         #if DEBUG
@@ -518,9 +518,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSubmit() {
         guard let active else { return }
         // Read the live capabilities dump to include with the profile, then submit.
-        active.readCapabilities { caps in
-            CommunitySubmission.submit(config: active.config, capabilities: caps)
+        active.readCapabilities { [weak self] caps in
+            let prefilled = CommunitySubmission.submit(config: active.config, capabilities: caps)
+            if !prefilled { self?.notifyClipboardSubmission() }
         }
+    }
+
+    /// The full profile + capabilities are too long for GitHub to pre-fill, so
+    /// they went to the clipboard — tell the user to paste them in.
+    private func notifyClipboardSubmission() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Profile copied to the clipboard"
+        alert.informativeText = "It’s too long for GitHub to pre-fill. In the new issue that just opened, paste it into the description (⌘V) and submit."
+        alert.runModal()
+    }
+
+    /// True when the user has saved their own profile for the active monitor —
+    /// only then is there something worth submitting (a bundled-only monitor has
+    /// nothing new to contribute).
+    private func activeHasUserProfile() -> Bool {
+        guard let active else { return false }
+        return FileManager.default.fileExists(atPath: MonitorConfigStore.fileURL(forName: active.config.name).path)
     }
 
     private func displayName(_ match: AppleSiliconDDC.Arm64Service) -> String {
