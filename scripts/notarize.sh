@@ -12,9 +12,9 @@ set -e
 #        --password "xxxx-xxxx-xxxx-xxxx"
 
 # Configuration
-PROJECT_NAME="BtnQ"
-APP_NAME="BtnQ"
-SCHEME="BtnQ"
+PROJECT_NAME="Didact"
+APP_NAME="Didact"
+SCHEME="Didact"
 CONFIGURATION="Release"
 KEYCHAIN_PROFILE="notarytool-password"
 

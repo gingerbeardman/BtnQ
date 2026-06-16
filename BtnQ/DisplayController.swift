@@ -33,7 +33,7 @@ final class DisplayController {
         self.productName = productName
         self.stableID = stableID
         self.config = config
-        self.queue = DispatchQueue(label: "com.gingerbeardman.BtnQ.ddc.\(displayID)")
+        self.queue = DispatchQueue(label: "com.gingerbeardman.Didact.ddc.\(displayID)")
         loadPersistedValues()
     }
 

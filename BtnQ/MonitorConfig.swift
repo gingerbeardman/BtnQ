@@ -4,7 +4,7 @@
 //
 //  The monitor "spec" is pure data, loaded from JSON so the community can add
 //  support for new monitors without writing any code. Files are loaded from the
-//  app bundle and from ~/Library/Application Support/BtnQ/Monitors/.
+//  app bundle and from ~/Library/Application Support/Didact/Monitors/.
 //
 
 import Foundation
@@ -192,7 +192,7 @@ struct Control: Codable {
 enum MonitorConfigStore {
     static var userDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return base.appendingPathComponent("BtnQ/Monitors", isDirectory: true)
+        return base.appendingPathComponent("Didact/Monitors", isDirectory: true)
     }
 
     /// Load every monitor config from the bundle and the user directory. Files
@@ -241,6 +241,23 @@ enum MonitorConfigStore {
     static func ensureUserDirectory() {
         try? FileManager.default.createDirectory(
             at: userDirectory, withIntermediateDirectories: true)
+    }
+
+    /// Carry over profiles taught under the app's former name (BtnQ) the first
+    /// time the renamed app runs: copy `…/BtnQ/Monitors/*.json` into the new
+    /// `…/Didact/Monitors` if the new folder has none yet. No-op afterwards.
+    static func migrateLegacyMonitorsIfNeeded() {
+        let fm = FileManager.default
+        ensureUserDirectory()
+        let current = (try? fm.contentsOfDirectory(at: userDirectory, includingPropertiesForKeys: nil)) ?? []
+        guard !current.contains(where: { $0.pathExtension.lowercased() == "json" }) else { return }
+
+        let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let legacy = base.appendingPathComponent("BtnQ/Monitors", isDirectory: true)
+        guard let files = try? fm.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.pathExtension.lowercased() == "json" {
+            try? fm.copyItem(at: file, to: userDirectory.appendingPathComponent(file.lastPathComponent))
+        }
     }
 
     /// The file URL a config with this name would be written to.

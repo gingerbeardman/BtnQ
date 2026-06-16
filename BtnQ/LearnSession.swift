@@ -85,9 +85,9 @@ final class LearnSession {
         queue.async {
             let capsString = AppleSiliconDDC.readCapabilities(service: svc)
             self.capabilities = capsString.map { AppleSiliconDDC.parseVCPCodes(from: $0) } ?? [:]
-            NSLog("BtnQ teach: capabilities string = %@", capsString ?? "(none — monitor didn't answer)")
+            NSLog("Didact: capabilities string = %@", capsString ?? "(none — monitor didn't answer)")
             let codes = self.capabilities.keys.sorted().map { String(format: "0x%02X", $0) }
-            NSLog("BtnQ teach: parsed %d VCP code(s): %@", codes.count, codes.joined(separator: " "))
+            NSLog("Didact: parsed %d VCP code(s): %@", codes.count, codes.joined(separator: " "))
             // Probe only the codes the monitor advertises. Reading a nonexistent
             // code is the slowest case — it exhausts the whole write/retry budget
             // before giving up — and the blind fallback sweeps the entire

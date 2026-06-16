@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        migrateLegacyData()
         configs = MonitorConfigStore.load()
         setupStatusItem()
         rescanDisplays()
@@ -63,6 +64,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func screensChanged() {
         rescanDisplays()
+    }
+
+    /// One-time carry-over from the app's former name (BtnQ): taught monitor
+    /// profiles, and the few persisted preferences that live under the old bundle
+    /// ID (menu-bar icon, write-only control states).
+    private func migrateLegacyData() {
+        MonitorConfigStore.migrateLegacyMonitorsIfNeeded()
+        guard let legacy = UserDefaults(suiteName: "com.gingerbeardman.BtnQ") else { return }
+        let std = UserDefaults.standard
+        if std.object(forKey: iconKey) == nil, let icon = legacy.string(forKey: iconKey) {
+            std.set(icon, forKey: iconKey)
+        }
+        for (key, value) in legacy.dictionaryRepresentation() where key.hasPrefix("btnq.state.") {
+            if std.object(forKey: key) == nil { std.set(value, forKey: key) }
+        }
     }
 
     // MARK: - Status item
@@ -102,12 +118,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusIcon() {
         guard let button = statusItem?.button else { return }
-        if let image = Self.monochromeSymbol(iconName, accessibility: "BtnQ") {
+        if let image = Self.monochromeSymbol(iconName, accessibility: "Didact") {
             button.image = image
             button.title = ""
         } else {
             button.image = nil
-            button.title = "BtnQ"
+            button.title = "Didact"
         }
     }
 
@@ -335,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func addAppMenu(to menu: NSMenu) {
-        let app = NSMenuItem(title: "BtnQ", action: nil, keyEquivalent: "")
+        let app = NSMenuItem(title: "Didact", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
 
         func add(_ title: String, _ action: Selector, key: String = "", enabled: Bool = true) {
@@ -390,8 +406,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         submenu.addItem(.separator())
 
-        add("About BtnQ…", #selector(showAbout))
-        add("Quit BtnQ", #selector(quit), key: "q")
+        add("About Didact…", #selector(showAbout))
+        add("Quit Didact", #selector(quit), key: "q")
 
         app.submenu = submenu
         menu.addItem(app)
@@ -499,7 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         guard let service = chosen.service else { return }
-        let queue = DispatchQueue(label: "com.gingerbeardman.BtnQ.teach.\(chosen.displayID)")
+        let queue = DispatchQueue(label: "com.gingerbeardman.Didact.teach.\(chosen.displayID)")
         presentTeach(session: LearnSession(service: service, queue: queue), name: displayName(chosen),
                      displayID: chosen.displayID)
     }
@@ -573,7 +589,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            NSLog("BtnQ: launch at login toggle failed: \(error)")
+            NSLog("Didact: launch at login toggle failed: \(error)")
         }
     }
 

@@ -24,9 +24,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		C95784072FDDC88B000337A7 /* BtnQ.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BtnQ.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C95784142FDDC88C000337A7 /* BtnQTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BtnQTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C957841E2FDDC88C000337A7 /* BtnQUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BtnQUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C95784072FDDC88B000337A7 /* Didact.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Didact.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C95784142FDDC88C000337A7 /* DidactTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DidactTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C957841E2FDDC88C000337A7 /* DidactUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DidactUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -85,9 +85,9 @@
 		C95784082FDDC88B000337A7 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				C95784072FDDC88B000337A7 /* BtnQ.app */,
-				C95784142FDDC88C000337A7 /* BtnQTests.xctest */,
-				C957841E2FDDC88C000337A7 /* BtnQUITests.xctest */,
+				C95784072FDDC88B000337A7 /* Didact.app */,
+				C95784142FDDC88C000337A7 /* DidactTests.xctest */,
+				C957841E2FDDC88C000337A7 /* DidactUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -95,9 +95,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		C95784062FDDC88B000337A7 /* BtnQ */ = {
+		C95784062FDDC88B000337A7 /* Didact */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C95784282FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "BtnQ" */;
+			buildConfigurationList = C95784282FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "Didact" */;
 			buildPhases = (
 				C95784032FDDC88B000337A7 /* Sources */,
 				C95784042FDDC88B000337A7 /* Frameworks */,
@@ -110,16 +110,16 @@
 			fileSystemSynchronizedGroups = (
 				C95784092FDDC88B000337A7 /* BtnQ */,
 			);
-			name = BtnQ;
+			name = Didact;
 			packageProductDependencies = (
 			);
 			productName = BtnQ;
-			productReference = C95784072FDDC88B000337A7 /* BtnQ.app */;
+			productReference = C95784072FDDC88B000337A7 /* Didact.app */;
 			productType = "com.apple.product-type.application";
 		};
-		C95784132FDDC88C000337A7 /* BtnQTests */ = {
+		C95784132FDDC88C000337A7 /* DidactTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C957842B2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "BtnQTests" */;
+			buildConfigurationList = C957842B2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "DidactTests" */;
 			buildPhases = (
 				C95784102FDDC88C000337A7 /* Sources */,
 				C95784112FDDC88C000337A7 /* Frameworks */,
@@ -133,16 +133,16 @@
 			fileSystemSynchronizedGroups = (
 				C95784172FDDC88C000337A7 /* BtnQTests */,
 			);
-			name = BtnQTests;
+			name = DidactTests;
 			packageProductDependencies = (
 			);
 			productName = BtnQTests;
-			productReference = C95784142FDDC88C000337A7 /* BtnQTests.xctest */;
+			productReference = C95784142FDDC88C000337A7 /* DidactTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		C957841D2FDDC88C000337A7 /* BtnQUITests */ = {
+		C957841D2FDDC88C000337A7 /* DidactUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C957842E2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "BtnQUITests" */;
+			buildConfigurationList = C957842E2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "DidactUITests" */;
 			buildPhases = (
 				C957841A2FDDC88C000337A7 /* Sources */,
 				C957841B2FDDC88C000337A7 /* Frameworks */,
@@ -156,11 +156,11 @@
 			fileSystemSynchronizedGroups = (
 				C95784212FDDC88C000337A7 /* BtnQUITests */,
 			);
-			name = BtnQUITests;
+			name = DidactUITests;
 			packageProductDependencies = (
 			);
 			productName = BtnQUITests;
-			productReference = C957841E2FDDC88C000337A7 /* BtnQUITests.xctest */;
+			productReference = C957841E2FDDC88C000337A7 /* DidactUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -186,7 +186,7 @@
 					};
 				};
 			};
-			buildConfigurationList = C95784022FDDC88B000337A7 /* Build configuration list for PBXProject "BtnQ" */;
+			buildConfigurationList = C95784022FDDC88B000337A7 /* Build configuration list for PBXProject "Didact" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -200,9 +200,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				C95784062FDDC88B000337A7 /* BtnQ */,
-				C95784132FDDC88C000337A7 /* BtnQTests */,
-				C957841D2FDDC88C000337A7 /* BtnQUITests */,
+				C95784062FDDC88B000337A7 /* Didact */,
+				C95784132FDDC88C000337A7 /* DidactTests */,
+				C957841D2FDDC88C000337A7 /* DidactUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -258,12 +258,12 @@
 /* Begin PBXTargetDependency section */
 		C95784162FDDC88C000337A7 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C95784062FDDC88B000337A7 /* BtnQ */;
+			target = C95784062FDDC88B000337A7 /* Didact */;
 			targetProxy = C95784152FDDC88C000337A7 /* PBXContainerItemProxy */;
 		};
 		C95784202FDDC88C000337A7 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C95784062FDDC88B000337A7 /* BtnQ */;
+			target = C95784062FDDC88B000337A7 /* Didact */;
 			targetProxy = C957841F2FDDC88C000337A7 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -417,7 +417,7 @@
 					"-framework",
 					CoreDisplay,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.BtnQ;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.Didact;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -455,7 +455,7 @@
 					"-framework",
 					CoreDisplay,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.BtnQ;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.Didact;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -484,7 +484,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BtnQ.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BtnQ";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Didact.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Didact";
 			};
 			name = Debug;
 		};
@@ -505,7 +505,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BtnQ.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BtnQ";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Didact.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Didact";
 			};
 			name = Release;
 		};
@@ -550,7 +550,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		C95784022FDDC88B000337A7 /* Build configuration list for PBXProject "BtnQ" */ = {
+		C95784022FDDC88B000337A7 /* Build configuration list for PBXProject "Didact" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C95784262FDDC88C000337A7 /* Debug */,
@@ -559,7 +559,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C95784282FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "BtnQ" */ = {
+		C95784282FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "Didact" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C95784292FDDC88C000337A7 /* Debug */,
@@ -568,7 +568,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C957842B2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "BtnQTests" */ = {
+		C957842B2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "DidactTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C957842C2FDDC88C000337A7 /* Debug */,
@@ -577,7 +577,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C957842E2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "BtnQUITests" */ = {
+		C957842E2FDDC88C000337A7 /* Build configuration list for PBXNativeTarget "DidactUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C957842F2FDDC88C000337A7 /* Debug */,

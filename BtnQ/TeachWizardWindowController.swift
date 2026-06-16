@@ -116,10 +116,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         instructionLabel?.isHidden = false
         statusLabel?.isHidden = false
 
-        progressLabel?.stringValue = "Welcome to BtnQ"
+        progressLabel?.stringValue = "Welcome to Didact"
         titleLabel?.stringValue = "Teach your monitor’s controls"
         instructionLabel?.stringValue = """
-        BtnQ will build a control profile for this monitor. It detects the standard controls — brightness, contrast, volume, input — automatically. For anything else, it asks you to change that setting on the monitor’s own on-screen menu so it can learn the code.
+        Didact will build a control profile for this monitor. It detects the standard controls — brightness, contrast, volume, input — automatically. For anything else, it asks you to change that setting on the monitor’s own on-screen menu so it can learn the code.
 
         You’ll test each control as you go, skip any your monitor doesn’t have, then save at the end — and optionally share it so others with this monitor benefit.
         """
@@ -386,7 +386,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Cadence indicator
 
-    /// A bar that fills over each detection sweep. When it fills, BtnQ has read
+    /// A bar that fills over each detection sweep. When it fills, Didact has read
     /// the monitor once — so the user learns to change the setting about once per
     /// fill (changing faster than a sweep can be missed).
     private func startCadence() {
@@ -735,7 +735,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         if useRecognized, let profile = recognizedProfile {
             return MonitorConfig(
                 name: monitorName, match: [monitorName], edid: edid, controls: profile.controls,
-                comment: "Matched to BtnQ's verified “\(profile.name)” profile.",
+                comment: "Matched to Didact's verified “\(profile.name)” profile.",
                 schemaVersion: profile.schemaVersion ?? 1)
         }
         return MonitorConfigBuilder.build(name: monitorName, learned: orderedLearned(),
