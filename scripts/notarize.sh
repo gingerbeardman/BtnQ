@@ -79,6 +79,18 @@ export_app() {
     print_success "Export complete: $APP_PATH"
 }
 
+verify_arch() {
+    # The app is Apple-Silicon-only (EXCLUDED_ARCHS = x86_64). Fail loudly if a
+    # stray x86_64 slice ever sneaks in, so we never ship a fat binary by accident.
+    print_step "Verifying arm64-only binary..."
+    local archs
+    archs="$(lipo -archs "$APP_PATH/Contents/MacOS/$APP_NAME")"
+    if [[ "$archs" != "arm64" ]]; then
+        print_error "Expected arm64-only, got: '$archs'"; exit 1
+    fi
+    print_success "Binary is arm64-only"
+}
+
 notarize_zip() {
     print_step "Notarizing app (this may take a few minutes)..."
     ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
@@ -96,10 +108,15 @@ create_dmg() {
     # and through a Finder/NSFileManager drag-install (smaller on disk). Transparent,
     # so the code signature and stapled ticket are unaffected.
     ditto --hfsCompression "$APP_PATH" "$stage/$APP_NAME.app"
+    # Confirm compression actually took (UF_COMPRESSED shows as "compressed" in
+    # `ls -lO` flags) — a UDZO image hides a regression in its own size, so guard here.
+    if ! ls -lO "$stage/$APP_NAME.app/Contents/MacOS/$APP_NAME" | grep -q compressed; then
+        print_error "HFS compression was not applied to the app"; exit 1
+    fi
     ln -s /Applications "$stage/Applications"   # drag-to-install
     hdiutil create -volname "$APP_NAME" -srcfolder "$stage" -ov -format UDZO "$DMG_PATH"
     rm -rf "$stage"
-    print_success "DMG created: $DMG_PATH"
+    print_success "DMG created: $DMG_PATH ($(du -h "$DMG_PATH" | cut -f1), HFS-compressed)"
 
     print_step "Notarizing DMG..."
     xcrun notarytool submit "$DMG_PATH" --keychain-profile "$KEYCHAIN_PROFILE" --wait
@@ -123,6 +140,7 @@ main() {
     clean_build
     archive_app
     export_app
+    verify_arch
     notarize_zip
     create_dmg
     verify_build
