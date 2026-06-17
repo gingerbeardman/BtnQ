@@ -23,13 +23,16 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private let session: LearnSession
     private let knownConfigs: [MonitorConfig]   // for auto-filling from known profiles
     private let edid: [MonitorConfig.EDIDMatch]?   // this display's EDID, stamped into the saved profile
+    private let displayID: CGDirectDisplayID    // to detect HDR support for the Color Mode step
     private let onSaved: () -> Void   // reload configs so the monitor lights up
     private let onClose: () -> Void
 
     private let templates = ControlTemplate.all
     private var autoFilled: [Control] = []      // confirmed from a known profile
+    private var includeAutoFilled = true            // user can drop the auto-filled extras at the summary
     private var recognizedProfile: MonitorConfig?   // monitor matched a known profile distinctively
     private var useRecognized = false               // adopt the recognized profile wholesale
+    private var capsCodes: Set<UInt8> = []          // VCP codes the monitor advertised, for the missing-feature gate
 
     private var window: NSWindow?
     private var progressLabel: NSTextField?
@@ -51,10 +54,25 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var skipButton: NSButton?
     private var primaryButton: NSButton?
     private var doneButton: NSButton?
+    private var includeExtrasCheckbox: NSButton?   // summary: drop the auto-filled extras
+    private var copyButton: NSButton?              // DEBUG: copy the profile to the clipboard
 
     // State
     private var index = 0
     private var learned: [Int: LearnedControl] = [:]
+    private var autoAccepted: Set<Int> = []   // template indices accepted from caps with no user step
+
+    // "More controls": standard MCCS controls the monitor advertises that the
+    // guided templates didn't cover, offered as an opt-in checklist (named from the
+    // spec — never unknown codes) after the guided steps.
+    private struct DiscoveryRow { let code: UInt8; let name: String; let continuous: Bool; let values: [Int]; let max: UInt16; let include: NSButton }
+    private var discoverable: [(code: UInt8, name: String, continuous: Bool, values: [Int], max: UInt16)]?  // nil = not scanned yet
+    private var discoveryRows: [DiscoveryRow] = []
+    private var discoveryBuilt = false
+    private var onDiscovery = false
+    private var pastDiscovery = false
+    private var discovered: [Control] = []   // controls the user named on the discovery list
+    private var discoveryScroll: NSScrollView?
     private var detectedCurrent: [Int: Int] = [:]   // value seen at detection, to re-seed the test control
     private var prepared = false
     private var onIntro = false
@@ -69,16 +87,34 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var testValueLabel: NSTextField?
     private var testWriteWork: DispatchWorkItem?
     private var labelingFields: [(value: Int, field: NSTextField)] = []   // user-named presets
+    private var hdrOptionCheckbox: NSButton?   // Color Mode step: opt in to an HDR toggle
 
     init(monitorName: String, session: LearnSession, knownConfigs: [MonitorConfig],
-         edid: [MonitorConfig.EDIDMatch]?,
+         edid: [MonitorConfig.EDIDMatch]?, displayID: CGDirectDisplayID,
          onSaved: @escaping () -> Void, onClose: @escaping () -> Void) {
         self.monitorName = monitorName
         self.session = session
         self.knownConfigs = knownConfigs
         self.edid = edid
+        self.displayID = displayID
         self.onSaved = onSaved
         self.onClose = onClose
+    }
+
+    /// Whether this display can show HDR — used to offer an HDR pseudo-option on the
+    /// Color Mode step. A display reports an EDR headroom > 1 when HDR-capable.
+    private func displaySupportsHDR() -> Bool {
+        guard let screen = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }) else { return false }
+        return screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.0
+    }
+
+    /// The Color Mode step (a proprietary, verifiable cycle — not Moon Halo) on an
+    /// HDR-capable display: offer to add an HDR toggle the wizard can't learn via DDC.
+    private func shouldOfferHDR(_ item: LearnedControl) -> Bool {
+        let t = item.template
+        return t.kind == .cycle && t.tier == .proprietary && !t.noVerify && !t.noRead && displaySupportsHDR()
     }
 
     func show() {
@@ -99,6 +135,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 self.session.recognizedProfile(from: self.knownConfigs) { [weak self] profile in
                     self?.recognizedProfile = profile
                 }
+                // Capabilities codes drive the "your monitor may not have this" gate.
+                self.session.capabilityCodes { [weak self] codes in
+                    self?.capsCodes = codes
+                }
                 self.prepared = true
                 self.introReady()
             }
@@ -112,6 +152,8 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private func showIntro() {
         onIntro = true
         summaryScroll?.isHidden = true
+        includeExtrasCheckbox?.isHidden = true
+        copyButton?.isHidden = true
         controlContainer?.isHidden = true
         instructionLabel?.isHidden = false
         statusLabel?.isHidden = false
@@ -147,7 +189,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 420),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
         window.title = "Set Up — \(monitorName)"
@@ -225,6 +267,14 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         self.summaryScroll = scroll
         self.summaryTextView = summary
 
+        let discovery = NSScrollView()
+        discovery.translatesAutoresizingMaskIntoConstraints = false
+        discovery.hasVerticalScroller = true
+        discovery.borderType = .bezelBorder
+        discovery.drawsBackground = false
+        discovery.isHidden = true
+        self.discoveryScroll = discovery
+
         let back = NSButton(title: "Back", target: self, action: #selector(backTapped))
         back.bezelStyle = .rounded
         self.backButton = back
@@ -243,16 +293,39 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         done.isHidden = true
         self.doneButton = done
 
+        let includeExtras = NSButton(checkboxWithTitle: "Include auto-filled controls",
+                                     target: self, action: #selector(includeExtrasChanged(_:)))
+        includeExtras.state = .on
+        includeExtras.isHidden = true
+        includeExtras.translatesAutoresizingMaskIntoConstraints = false
+        self.includeExtrasCheckbox = includeExtras
+
         let leftButtons = NSStackView(views: [back])
         leftButtons.translatesAutoresizingMaskIntoConstraints = false
-        let rightButtons = NSStackView(views: [retry, skip, primary, done])
+        var rightItems: [NSView] = [retry, skip, primary, done]
+        #if DEBUG
+        let copy = NSButton(title: "Copy", target: self, action: #selector(copyTapped))
+        copy.bezelStyle = .rounded
+        copy.isHidden = true
+        self.copyButton = copy
+        rightItems.insert(copy, at: 2)   // sits just before the Save/Submit primary
+        #endif
+        let rightButtons = NSStackView(views: rightItems)
         rightButtons.translatesAutoresizingMaskIntoConstraints = false
         rightButtons.spacing = 8
 
-        [progress, title, instruction, status, spin, cadence, container, scroll, leftButtons, rightButtons]
+        [progress, title, instruction, status, spin, cadence, container, scroll, discovery, leftButtons, rightButtons, includeExtras]
             .forEach { content.addSubview($0) }
 
         NSLayoutConstraint.activate([
+            // Pin the content to a fixed size. Without this the non-resizable window
+            // sizes to its fitting width, and the wrapping text labels report a
+            // different intrinsic width on each step — so the window visibly jumps
+            // width between Welcome, the steps, and the summary. A fixed size makes
+            // every screen identical and forces the long copy to wrap.
+            content.widthAnchor.constraint(equalToConstant: 600),
+            content.heightAnchor.constraint(equalToConstant: 420),
+
             progress.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             progress.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             progress.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
@@ -285,11 +358,20 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
             scroll.bottomAnchor.constraint(equalTo: rightButtons.topAnchor, constant: -14),
 
+            discovery.topAnchor.constraint(equalTo: instruction.bottomAnchor, constant: 12),
+            discovery.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            discovery.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            discovery.bottomAnchor.constraint(equalTo: rightButtons.topAnchor, constant: -14),
+
             leftButtons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             leftButtons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
 
             rightButtons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
             rightButtons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+
+            includeExtras.centerYAnchor.constraint(equalTo: rightButtons.centerYAnchor),
+            includeExtras.leadingAnchor.constraint(equalTo: leftButtons.trailingAnchor, constant: 16),
+            includeExtras.trailingAnchor.constraint(lessThanOrEqualTo: rightButtons.leadingAnchor, constant: -12),
         ])
 
         window.contentView = content
@@ -298,18 +380,76 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Step flow
 
+    /// Template indices the user actually steps through (everything not accepted
+    /// straight from the capabilities string).
+    private var pendingSteps: [Int] { templates.indices.filter { !autoAccepted.contains($0) } }
+
+    /// Before stepping, accept everything DDC reports for certain — universal
+    /// controls advertised in the capabilities string, and a Colour Mode we can
+    /// fingerprint — with no confirmation. Only the uncertain controls (Moon Halo,
+    /// anything not cleanly advertised) remain as steps.
+    private func autoAcceptThenStep() {
+        setStatus("Detecting standard controls…")
+        instructionLabel?.stringValue = "Reading the controls your monitor reports automatically…"
+        spinner?.startAnimation(nil)
+        summaryScroll?.isHidden = true
+        controlContainer?.isHidden = true
+        retryButton?.isHidden = true
+        skipButton?.isHidden = true
+        primaryButton?.isHidden = true
+        doneButton?.isHidden = true
+        copyButton?.isHidden = true
+        backButton?.isEnabled = false
+        autoAcceptNext(0)
+    }
+
+    private func autoAcceptNext(_ i: Int) {
+        guard i < templates.count else {
+            spinner?.stopAnimation(nil)
+            index = 0
+            showStep()
+            return
+        }
+        let t = templates[i]
+        let onResult: (LearnSession.Detected?) -> Void = { [weak self] detected in
+            guard let self else { return }
+            if let d = detected {
+                self.learned[i] = LearnedControl(template: t, code: d.code, max: d.max,
+                    options: self.cycleOptions(t, code: d.code, values: d.values, capsDiscrete: d.capsDiscrete))
+                self.detectedCurrent[i] = d.current
+                self.autoAccepted.insert(i)
+            }
+            self.autoAcceptNext(i + 1)
+        }
+        if t.standardCode != nil {
+            // A spec control that's advertised in caps is known for certain.
+            session.autoDetect(t) { onResult($0?.inCaps == true ? $0 : nil) }
+        } else if t.kind == .cycle {
+            // A proprietary cycle we can fingerprint from caps (e.g. Colour Mode).
+            session.capsMatch(t, excluding: excludedCodes(for: t)) { onResult($0) }
+        } else {
+            onResult(nil)
+        }
+    }
+
     private func showStep() {
         resetStepTransients()
-        guard index < templates.count else { showSummary(); return }
+        discoveryScroll?.isHidden = true
+        guard index < templates.count else { enterDiscoveryOrSummary(); return }
+        if autoAccepted.contains(index) { advance(); return }   // accepted from caps — no step
 
         summaryScroll?.isHidden = true
+        includeExtrasCheckbox?.isHidden = true
+        copyButton?.isHidden = true
         instructionLabel?.isHidden = false
         statusLabel?.isHidden = false
 
         let template = templates[index]
-        progressLabel?.stringValue = "Step \(index + 1) of \(templates.count)"
+        let pending = pendingSteps
+        let pos = pending.firstIndex(of: index) ?? 0
+        progressLabel?.stringValue = "Step \(pos + 1) of \(pending.count)"
         titleLabel?.stringValue = template.label
-        backButton?.isEnabled = index > 0
+        backButton?.isEnabled = pos > 0
         doneButton?.isHidden = true
 
         // If this step was already learned (e.g. we came back to it), restore its
@@ -333,14 +473,29 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 guard let self, self.isCurrent(template) else { return }
                 if let detected {
                     let item = LearnedControl(template: template, code: detected.code, max: detected.max,
-                                              options: self.cycleOptions(template, values: detected.values, capsDiscrete: detected.capsDiscrete))
+                                              options: self.cycleOptions(template, code: detected.code, values: detected.values, capsDiscrete: detected.capsDiscrete))
                     self.enterConfirm(item, current: detected.current, auto: true)
                 } else {
                     self.enterManualLearning(template)
                 }
             }
         } else {
-            enterManualLearning(template)
+            // Proprietary cycle: try to identify it from the capabilities fingerprint
+            // (e.g. the colour-mode register advertising the BenQ preset values)
+            // before asking the user to teach it by hand — observation alone often
+            // locks onto a coupled register (brightness, night mode).
+            setStatus("Detecting…")
+            instructionLabel?.stringValue = "Checking your monitor’s capabilities…"
+            session.capsMatch(template, excluding: excludedCodes(for: template)) { [weak self] detected in
+                guard let self, self.isCurrent(template) else { return }
+                if let detected {
+                    let item = LearnedControl(template: template, code: detected.code, max: detected.max,
+                                              options: self.cycleOptions(template, code: detected.code, values: detected.values, capsDiscrete: detected.capsDiscrete))
+                    self.enterConfirm(item, current: detected.current, auto: true)
+                } else {
+                    self.enterManualLearning(template)
+                }
+            }
         }
     }
 
@@ -350,7 +505,14 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         retryButton?.isHidden = true
         startCadence()   // shows the rhythm; replaces the plain spinner here
 
-        var instruction = "On your monitor’s own on-screen menu, \(template.action). The bar below is a timer for each reading — change the setting once, wait for the bar to fill, then change it again. A few times is enough."
+        var instruction = ""
+        // Proprietary features (Moon Halo, picture modes) are model-specific — most
+        // monitors don't have them. Lead with that so the user skips rather than
+        // pressing an unrelated button and teaching a wrong code.
+        if template.tier == .proprietary {
+            instruction += "Many monitors don’t have this — if yours doesn’t, click Skip. Otherwise, "
+        }
+        instruction += "on your monitor’s own on-screen menu, \(template.action). Each time the bar below fills, change the setting once — wait for the next fill before changing it again. A few times is enough."
         if template.kind == .cycle {
             // Changing a preset can move several settings at once, so detection may
             // not lock on — offer a manual pick of the codes that changed.
@@ -364,21 +526,33 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             primaryButton?.isHidden = true
         }
         instructionLabel?.stringValue = instruction
-        setStatus("Waiting for a change…")
 
-        session.beginLearning(expectedKind: template.kind, expectedCode: expectedCode(for: template)) { [weak self] update in
+        // When the code a known profile uses for this proprietary feature isn't in
+        // the monitor's advertised capabilities, it almost certainly lacks the
+        // feature — say so plainly so the user Skips instead of teaching noise.
+        let likelyAbsent = template.tier == .proprietary
+            && !capsCodes.isEmpty
+            && (expectedCode(for: template).map { !capsCodes.contains($0) } ?? false)
+        if likelyAbsent {
+            setStatus("Not found in your monitor’s capabilities — it likely doesn’t have this. Skip unless you’re sure.", color: .systemOrange)
+        } else {
+            setStatus("Waiting for a change…")
+        }
+
+        session.beginLearning(expectedKind: template.kind, expectedCode: expectedCode(for: template),
+                              excludedCodes: excludedCodes(for: template)) { [weak self] update in
             guard let self, self.isCurrent(template) else { return }
             switch update {
             case let .detecting(_, count):
                 self.sweepCompleted()   // one sweep done → reset the cadence fill
                 self.setStatus(count == 0
                     ? "Waiting for a change… switch it on the monitor."
-                    : "Got it \(count)× — keep switching slowly.")
+                    : "Got it \(count)× — keep switching slowly, once per progress bar tick.")
             case let .learned(code, max, current, values, capsDiscrete):
                 self.session.endLearning()
                 self.stopCadence()
                 let item = LearnedControl(template: template, code: code, max: max,
-                                          options: self.cycleOptions(template, values: values, capsDiscrete: capsDiscrete))
+                                          options: self.cycleOptions(template, code: code, values: values, capsDiscrete: capsDiscrete))
                 self.enterConfirm(item, current: current, auto: false)
             }
         }
@@ -438,9 +612,16 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         var status = "✓ \(how) \(Self.hex(item.code))"
         if item.template.kind == .cycle, let count = item.options?.count { status += " · \(count) options" }
         setStatus(status, color: .systemGreen)
-        instructionLabel?.stringValue = needsLabeling(item)
+        var guidance = needsLabeling(item)
             ? "We found \(item.options?.count ?? 0) modes but don't know their names. Tap “Set” to see each one on the monitor, type its name, then Confirm."
             : "Use the control below to check it actually changes your monitor, then Confirm. If nothing happens, Detect Again."
+        // This control can't be read back, so Didact can't confirm the write landed —
+        // the user's eyes are the only check. Steer them to Skip a no-op rather than
+        // commit a control their monitor doesn't really have.
+        if item.template.noVerify || item.template.noRead {
+            guidance += " This setting can’t be read back, so watch the monitor as you test — if nothing changes, click Skip; your monitor may not have it."
+        }
+        instructionLabel?.stringValue = guidance
 
         showTestControl(for: item, current: current)
 
@@ -469,31 +650,67 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         return nil
     }
 
-    private func cycleOptions(_ template: ControlTemplate, values: [Int], capsDiscrete: Bool) -> [ControlTemplate.OptionTemplate]? {
+    /// The standard range registers (brightness/contrast/volume/sharpness). A
+    /// proprietary mode-switch must never resolve onto one of these — they only
+    /// move as a side-effect of changing a preset.
+    private static let universalRangeCodes: Set<UInt8> = Set(
+        ControlTemplate.all
+            .filter { $0.tier == .universal && $0.kind == .range }
+            .compactMap { $0.standardCode })
+
+    /// Codes detection must not pick for this step: every code already committed to
+    /// another control, plus — for a proprietary control — the standard range
+    /// registers a preset drags along. The code a known profile expects for THIS
+    /// control is never excluded (LearnSession protects it).
+    private func excludedCodes(for template: ControlTemplate) -> Set<UInt8> {
+        var excluded = Set(learned.filter { $0.key != index }.values.map { $0.code })
+        if template.tier == .proprietary { excluded.formUnion(Self.universalRangeCodes) }
+        return excluded
+    }
+
+    private func cycleOptions(_ template: ControlTemplate, code: UInt8, values: [Int], capsDiscrete: Bool) -> [ControlTemplate.OptionTemplate]? {
         guard template.kind == .cycle else { return nil }
-        let labels = Dictionary((template.options ?? []).map { ($0.value, $0.label) }, uniquingKeysWith: { a, _ in a })
-        func labeled(_ vals: [Int]) -> [ControlTemplate.OptionTemplate] {
-            vals.map { ControlTemplate.OptionTemplate(value: $0, label: labels[$0] ?? String(format: "Mode 0x%02X", $0)) }
+        let known = Dictionary((template.options ?? []).map { ($0.value, $0.label) }, uniquingKeysWith: { a, _ in a })
+        // Prefer the template's own names, then the MCCS standard value name, and
+        // only fall back to the plain decimal value (more useful than raw hex — e.g.
+        // gamma reads "100", not "Mode 0x64") when neither knows the value.
+        func label(_ value: Int) -> String {
+            known[value] ?? MCCS.valueName(code, value) ?? "\(value)"
         }
-        // The monitor advertised an explicit value list (e.g. Color Mode) → it's
-        // authoritative for WHICH modes exist (robust to how the user cycled, or a
-        // stray press). Order them by the template's familiar sequence, then
-        // append any modes the monitor has that the template doesn't know.
+
+        // The monitor advertised an explicit value list → it's authoritative for
+        // WHICH modes exist.
         if capsDiscrete, !values.isEmpty {
-            // The monitor advertised which values exist; keep only those that map
-            // to a known mode name (in the template's familiar order). Unnamed
-            // advertised values (e.g. 0x23) are dropped rather than shown as
-            // "Mode 0x23". For an unrecognized monitor (no named matches) fall back
-            // to labeling the raw values so it's still usable.
-            let present = Set(values)
-            let named = (template.options ?? []).filter { present.contains($0.value) }
-            if !named.isEmpty { return named }
-            return labeled(values.sorted())
+            let present = values.sorted()
+            let namedKnown = present.filter { known[$0] != nil }
+            // If the template recognizes a strong majority of the advertised modes,
+            // this is a known family (e.g. the BenQ colour-mode register): keep just
+            // the named ones, dropping internal/omitted values like an HDR-only mode.
+            // Otherwise label everything — on an unfamiliar monitor an unknown value
+            // is a real mode we mustn't lose, so show it as "Mode 0x##" to be named.
+            if namedKnown.count * 3 >= present.count * 2 {
+                // The caps order is arbitrary and we can't see the OSD's order, so
+                // present named modes alphabetically for a stable, scannable list.
+                return namedKnown
+                    .map { ControlTemplate.OptionTemplate(value: $0, label: known[$0]!) }
+                    .sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
+            }
+            return present.map { ControlTemplate.OptionTemplate(value: $0, label: label($0)) }
         }
-        // Listed bare (e.g. Moon Halo) → prefer the template's known set so we
-        // don't save an incomplete cycle, falling back to whatever was observed.
-        if let opts = template.options, !opts.isEmpty { return opts }
-        return values.isEmpty ? nil : labeled(values)
+
+        // Bare code (no advertised value list, e.g. Moon Halo). Our only sources are
+        // what we observed — unreliable for a noRead/noVerify control, and prone to
+        // high-byte noise — and the template's curated hints. Prefer the template's
+        // option set when we're confident this really is the control: its spec code,
+        // a known-profile hint, or an unverifiable cycle that can't be learned by
+        // observation anyway (P1 keeps detection off the wrong register; the step
+        // warns when the feature looks absent). Otherwise the values are another
+        // control's — label what was observed so the user names the real modes.
+        let trustTemplate = code == template.standardCode
+            || code == expectedCode(for: template)
+            || template.noRead || template.noVerify
+        if trustTemplate, let opts = template.options, !opts.isEmpty { return opts }
+        return values.isEmpty ? nil : values.sorted().map { .init(value: $0, label: label($0)) }
     }
 
     private func advance() {
@@ -511,6 +728,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         testOptions = nil
         testValueLabel = nil
         labelingFields = []
+        hdrOptionCheckbox = nil
 
         let control: NSView
         switch template.kind {
@@ -519,7 +737,9 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                                         max: item.max > 0 ? Int(item.max) : (template.fallbackMax ?? 100),
                                         current: current)
         case .cycle:
-            let options = item.options ?? template.options ?? []
+            // The HDR pseudo-option (if any) is opted into via the checkbox below, not
+            // tested as a DDC value — filter it out of the live test control.
+            let options = (item.options ?? template.options ?? []).filter { !$0.hdr }
             // For a proprietary cycle whose modes we couldn't name (e.g. Picture
             // Mode on a non-RD BenQ), let the user name each one instead of showing
             // "Mode 0x##". Universal/known cycles just use a popup to test.
@@ -532,11 +752,30 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             control = NSView()
         }
         control.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(control)
+
+        // On an HDR-capable display, offer to add an HDR mode the wizard can't learn
+        // over DDC (it switches macOS HDR instead). Stacked under the test control.
+        let view: NSView
+        if shouldOfferHDR(item) {
+            let cb = NSButton(checkboxWithTitle: "This monitor has an HDR mode (adds a toggle that switches macOS HDR)",
+                              target: nil, action: nil)
+            cb.state = (item.options ?? []).contains { $0.hdr } ? .on : .off
+            cb.translatesAutoresizingMaskIntoConstraints = false
+            hdrOptionCheckbox = cb
+            let stack = NSStackView(views: [control, cb])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 14
+            view = stack
+        } else {
+            view = control
+        }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
         NSLayoutConstraint.activate([
-            control.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            control.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            control.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
         container.isHidden = false
     }
@@ -660,6 +899,140 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         if let value { session.write(code: code, value: UInt16(value)) }
     }
 
+    // MARK: - Discovery (caps-driven "More controls")
+
+    /// After the guided steps: scan for extra advertised codes the templates didn't
+    /// cover and offer them as an optional review list, then go to the summary.
+    private func enterDiscoveryOrSummary() {
+        if pastDiscovery { showSummary(); return }
+        if let codes = discoverable {                       // already scanned
+            codes.isEmpty ? showSummary() : showDiscovery(codes)
+            return
+        }
+        // Scan once. Exclude what we've already handled (templates + learned codes).
+        resetStepTransients()
+        summaryScroll?.isHidden = true
+        discoveryScroll?.isHidden = true
+        controlContainer?.isHidden = true
+        instructionLabel?.isHidden = false
+        statusLabel?.isHidden = false
+        retryButton?.isHidden = true; skipButton?.isHidden = true
+        primaryButton?.isHidden = true; doneButton?.isHidden = true; copyButton?.isHidden = true
+        backButton?.isEnabled = false
+        titleLabel?.stringValue = "More controls"
+        progressLabel?.stringValue = "Almost done"
+        instructionLabel?.stringValue = "Scanning your monitor’s capabilities for extra controls…"
+        setStatus("")
+        spinner?.startAnimation(nil)
+
+        let used = Set(learned.values.map { $0.code })
+        let standard = Set(templates.compactMap { $0.standardCode })
+        session.discoverableCodes(excluding: used.union(standard)) { [weak self] codes in
+            guard let self else { return }
+            self.discoverable = codes
+            self.spinner?.stopAnimation(nil)
+            codes.isEmpty ? self.showSummary() : self.showDiscovery(codes)
+        }
+    }
+
+    private func showDiscovery(_ codes: [(code: UInt8, name: String, continuous: Bool, values: [Int], max: UInt16)]) {
+        resetStepTransients()
+        onDiscovery = true
+        spinner?.stopAnimation(nil)
+        summaryScroll?.isHidden = true
+        controlContainer?.isHidden = true
+        instructionLabel?.isHidden = false
+        statusLabel?.isHidden = true
+        copyButton?.isHidden = true
+        progressLabel?.stringValue = "More controls"
+        titleLabel?.stringValue = "More controls"
+        instructionLabel?.stringValue = "Your monitor also reports these standard controls (named from the VESA MCCS spec). Tick any you’d like to include — all optional."
+
+        if !discoveryBuilt { buildDiscoveryRows(codes); discoveryBuilt = true }
+        discoveryScroll?.isHidden = false
+
+        backButton?.isEnabled = !pendingSteps.isEmpty   // nowhere to go back to if all auto-accepted
+        retryButton?.isHidden = true
+        skipButton?.isHidden = true
+        doneButton?.isHidden = true
+        primaryButton?.isHidden = false
+        primaryButton?.title = "Continue"
+        primaryButton?.isEnabled = true
+    }
+
+    private func buildDiscoveryRows(_ codes: [(code: UInt8, name: String, continuous: Bool, values: [Int], max: UInt16)]) {
+        // A grid so the code and type line up in columns instead of trailing each
+        // (variable-width) name raggedly.
+        let grid = NSGridView()
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.rowSpacing = 9
+        grid.columnSpacing = 16
+        discoveryRows = []
+
+        for entry in codes {
+            let include = NSButton(checkboxWithTitle: entry.name, target: nil, action: nil)
+            include.state = .off
+
+            let code = NSTextField(labelWithString: String(format: "0x%02X", entry.code))
+            code.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            code.textColor = .secondaryLabelColor
+
+            let type = NSTextField(labelWithString: entry.continuous ? "range" : "modes")
+            type.font = .systemFont(ofSize: 11)
+            type.textColor = .tertiaryLabelColor
+
+            grid.addRow(with: [include, code, type])
+            discoveryRows.append(DiscoveryRow(code: entry.code, name: entry.name, continuous: entry.continuous,
+                                              values: entry.values, max: entry.max, include: include))
+        }
+        grid.column(at: 0).xPlacement = .leading
+        grid.column(at: 1).xPlacement = .leading
+        grid.column(at: 2).xPlacement = .leading
+        // Inset via the grid's own padding — the scroll view manages the document
+        // view's frame and ignores leading constraints, so do the margins internally.
+        grid.column(at: 0).leadingPadding = 16
+        grid.column(at: 2).trailingPadding = 16
+        if grid.numberOfRows > 0 {
+            grid.row(at: 0).topPadding = 12
+            grid.row(at: grid.numberOfRows - 1).bottomPadding = 12
+        }
+
+        discoveryScroll?.documentView = grid
+        if let clip = discoveryScroll?.contentView {
+            NSLayoutConstraint.activate([
+                grid.topAnchor.constraint(equalTo: clip.topAnchor),
+                grid.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+                grid.trailingAnchor.constraint(lessThanOrEqualTo: clip.trailingAnchor),
+            ])
+        }
+    }
+
+    /// Turn each ticked row into a control, named by its MCCS standard name. Ranges
+    /// use the monitor's reported max; a two-value control becomes an on/off toggle
+    /// (e.g. Audio Mute); other discrete controls become a cycle whose options carry
+    /// their MCCS value names where the spec defines them.
+    private func commitDiscovery() {
+        discovered = discoveryRows.compactMap { row -> Control? in
+            guard row.include.state == .on else { return nil }
+            let vcp = HexValue(Int(row.code))
+            if row.continuous || row.values.isEmpty {
+                return Control(kind: .range, label: row.name, vcp: vcp, min: 0, max: row.max > 0 ? Int(row.max) : 100)
+            }
+            // Two advertised values → an on/off toggle. Prefer 0x01 as "on"
+            // (the DDC convention; e.g. Audio Mute 01h = Mute, 02h = Un-mute).
+            if row.values.count == 2 {
+                let on = row.values.contains(1) ? 1 : (row.values.max() ?? row.values[0])
+                let off = row.values.first { $0 != on } ?? row.values[0]
+                return Control(kind: .toggle, label: row.name, vcp: vcp,
+                               onValue: HexValue(on), offValue: HexValue(off))
+            }
+            let opts = row.values.map {
+                Control.Option(value: HexValue($0), label: MCCS.valueName(row.code, $0) ?? "\($0)")
+            }
+            return Control(kind: .cycle, label: row.name, vcp: vcp, options: opts)
+        }
+    }
+
     // MARK: - Summary & save
 
     private func showSummary() {
@@ -669,6 +1042,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         instructionLabel?.isHidden = true
         statusLabel?.isHidden = true
         summaryScroll?.isHidden = false
+        discoveryScroll?.isHidden = true
+        onDiscovery = false
+        includeExtrasCheckbox?.isHidden = true   // shown below only when there are extras to drop
+        copyButton?.isHidden = false             // DEBUG only; created only in debug builds
         progressLabel?.stringValue = "Done"
 
         if useRecognized, let profile = recognizedProfile {
@@ -704,19 +1081,38 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             let extras = autoFilled.filter { !taught.contains($0.stateKey) }
             if !extras.isEmpty {
                 lines.append("")
-                lines.append("Auto-filled from a known profile (verified against your monitor):")
-                for c in extras {
+                if includeAutoFilled {
+                    lines.append("Auto-filled from a known profile (verified against your monitor):")
+                    for c in extras {
+                        let code = c.featureCode.map(Self.hex) ?? "?"
+                        lines.append("＋ \(c.label ?? "Control") — \(code) (\(c.kind.rawValue))")
+                    }
+                } else {
+                    lines.append("\(extras.count) auto-filled control(s) excluded — tick the box below to include them.")
+                }
+            }
+            // Controls the user named on the "More controls" discovery list.
+            if !discovered.isEmpty {
+                lines.append("")
+                lines.append("Extra controls you added:")
+                for c in discovered {
                     let code = c.featureCode.map(Self.hex) ?? "?"
                     lines.append("＋ \(c.label ?? "Control") — \(code) (\(c.kind.rawValue))")
                 }
             }
+            // Only meaningful before saving and only when there's something to drop.
+            includeExtrasCheckbox?.isHidden = saved || extras.isEmpty
+            includeExtrasCheckbox?.state = includeAutoFilled ? .on : .off
             let dupes = MonitorConfigBuilder.duplicateCodes(orderedLearned())
             if !dupes.isEmpty {
                 lines.append("")
                 lines.append("⚠️ \(dupes.map(Self.hex).joined(separator: ", ")) learned for more than one control — review before saving.")
             }
             summaryTextView?.string = lines.joined(separator: "\n")
-            backButton?.isEnabled = !saved
+            // Back goes to discovery (if any) or the last step; disabled once saved
+            // or when there's nothing earlier to return to.
+            let canGoBack = (discoverable.map { !$0.isEmpty } ?? false) || !pendingSteps.isEmpty
+            backButton?.isEnabled = !saved && canGoBack
             retryButton?.isHidden = true
         }
 
@@ -738,12 +1134,131 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 comment: "Matched to Didact's verified “\(profile.name)” profile.",
                 schemaVersion: profile.schemaVersion ?? 1)
         }
-        return MonitorConfigBuilder.build(name: monitorName, learned: orderedLearned(),
-                                          extras: autoFilled, orderedLike: recognizedProfile, edid: edid)
+        let config = MonitorConfigBuilder.build(name: monitorName, learned: orderedLearned(),
+                                                extras: (includeAutoFilled ? autoFilled : []) + discovered + rdSeriesExtras(),
+                                                orderedLike: recognizedProfile, edid: edid)
+        return isRDSeries ? withRDColorMode(config) : config
+    }
+
+    /// The RD-series Color Mode order as it appears in the monitor's OSD.
+    private static let rdColorModeOrder = [
+        "Coding - Dark Theme", "Coding - Light Theme", "Coding - Paper Color",
+        "M-book", "Cinema", "Game", "HDR", "ePaper", "sRGB", "User",
+    ]
+
+    /// Match the RD-series OSD: add Game (0x28) — which the firmware omits from the
+    /// capabilities list even though the mode works — and order Color Mode like the
+    /// on-screen menu (rather than the alphabetical default we use for unknown sets).
+    private func withRDColorMode(_ config: MonitorConfig) -> MonitorConfig {
+        let order = Self.rdColorModeOrder
+        func rank(_ label: String) -> Int {
+            order.firstIndex { $0.caseInsensitiveCompare(label) == .orderedSame } ?? order.count
+        }
+        let controls = config.controls.map { control -> Control in
+            guard control.kind == .cycle,
+                  control.label?.caseInsensitiveCompare("Color Mode") == .orderedSame,
+                  var options = control.options else { return control }
+            if !options.contains(where: { $0.value?.value == 0x28 }) {
+                options.append(Control.Option(value: HexValue(0x28), label: "Game"))
+            }
+            // RD-series has an HDR picture mode that toggles macOS HDR (no DDC value).
+            if !options.contains(where: { $0.hdr == true }) {
+                options.append(Control.Option(label: "HDR", hdr: true))
+            }
+            options.sort { rank($0.label) < rank($1.label) }
+            var copy = control
+            copy.options = options
+            return copy
+        }
+        return MonitorConfig(name: config.name, match: config.match, edid: config.edid,
+                             controls: controls, comment: config.comment, schemaVersion: config.schemaVersion)
+    }
+
+    /// BenQ RD-series ("BenQ RD280UG") — the name has "RD" followed by a digit. These
+    /// monitors reuse/repurpose codes for proprietary features (Moon Halo, Coding
+    /// Booster, Eye Care) the wizard can't learn by observation, so we add them from
+    /// the known layout — but only for an RD-series monitor, to avoid mislabelling
+    /// those codes on anything else.
+    private var isRDSeries: Bool {
+        guard let r = monitorName.range(of: "RD", options: .caseInsensitive) else { return false }
+        return monitorName[r.upperBound...].first?.isNumber == true
+    }
+
+    /// Proprietary controls known to live at fixed codes on RD-series monitors,
+    /// added when the monitor actually advertises each code. Mirrors the curated
+    /// bundled profile so a freshly-taught RD monitor gains Moon Halo's packed
+    /// brightness/colour temp and the Eye Care set.
+    private func rdSeriesExtras() -> [Control] {
+        var extras: [Control] = []
+
+        // Moon Halo's own backlight brightness + colour temp, packed into d9
+        // (high/low byte) — distinct from the monitor's main Brightness/Colour Temp.
+        // Brightness is read-only while Moon Halo is on Auto (it drives it itself).
+        if capsCodes.contains(0xD9),
+           let moon = orderedLearned().first(where: { $0.template.label.caseInsensitiveCompare("Moon Halo") == .orderedSame }) {
+            let auto = moon.options?.first(where: { $0.label.range(of: "Auto", options: .caseInsensitive) != nil })?.value
+            let disable = auto.map { Control.Condition(vcp: HexValue(Int(moon.code)), equals: HexValue($0)) }
+            extras.append(Control(kind: .range, label: "Moon Halo Brightness", vcp: HexValue(0xD9), byte: .low,
+                                  min: 1, max: 10, disableWhen: disable))
+            extras.append(Control(kind: .range, label: "Moon Halo Color Temperature", vcp: HexValue(0xD9), byte: .high,
+                                  min: 1, max: 7))
+        }
+
+        guard isRDSeries else { return extras }
+
+        // Eye Care features are hidden in sRGB / HDR (no effect there), matching the
+        // curated profile. Build that condition from the learned Color Mode + sRGB.
+        let colorMode = orderedLearned().first(where: { $0.template.label.caseInsensitiveCompare("Color Mode") == .orderedSame })
+        let cmCode = colorMode.map { HexValue(Int($0.code)) }
+        let srgb = colorMode?.options?.first(where: { $0.label.range(of: "sRGB", options: .caseInsensitive) != nil })?.value
+        let eyeHide: Control.Condition = (cmCode != nil && srgb != nil)
+            ? Control.Condition(vcp: cmCode, equalsAny: [HexValue(srgb!)], system: "hdr")
+            : Control.Condition(system: "hdr")
+
+        if capsCodes.contains(0xD1) {
+            extras.append(Control(kind: .cycle, label: "Night Mode", vcp: HexValue(0xD1),
+                                  options: [.init(value: HexValue(2), label: "Auto"),
+                                            .init(value: HexValue(1), label: "On"),
+                                            .init(value: HexValue(0), label: "Off")]))
+        }
+        if capsCodes.contains(0xD0) {
+            extras.append(Control(kind: .range, label: "Night Level", vcp: HexValue(0xD0), min: 1, max: 10))
+        }
+        if capsCodes.contains(0x19) {
+            extras.append(Control(kind: .range, label: "Low Blue Light", vcp: HexValue(0x19), min: 0, max: 5, hideWhen: eyeHide))
+        }
+        if capsCodes.contains(0xE5) {
+            extras.append(Control(kind: .range, label: "Sensitivity", vcp: HexValue(0xE5), min: 1, max: 10, hideWhen: eyeHide))
+        }
+        if capsCodes.contains(0xE2) {
+            extras.append(Control(kind: .toggle, label: "Auto Brightness", vcp: HexValue(0xE2),
+                                  onValue: HexValue(255), offValue: HexValue(0), noRead: true, hideWhen: eyeHide))
+        }
+        return extras
     }
 
     private func orderedLearned() -> [LearnedControl] {
         templates.indices.compactMap { learned[$0] }
+    }
+
+    /// A code learned for two controls is almost always a mis-detection (a preset
+    /// dragging brightness along). Block the save on it — returning to the summary
+    /// to re-teach — rather than shipping a profile where two controls fight over
+    /// one register. Returns true when it's safe to proceed.
+    private func confirmDuplicateCodes() -> Bool {
+        let dupes = MonitorConfigBuilder.duplicateCodes(orderedLearned())
+        guard !dupes.isEmpty else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Two controls share \(dupes.map(Self.hex).joined(separator: ", "))"
+        alert.informativeText = """
+        More than one control was learned on the same VCP code — usually because changing a preset also moved another setting (e.g. brightness), so detection locked onto the wrong one. Saving this would make those controls fight over one register.
+
+        Go back, use “Detect Again” on the affected control, and adjust only that setting on the monitor.
+        """
+        alert.addButton(withTitle: "Go Back & Fix")
+        alert.addButton(withTitle: "Save Anyway")
+        return alert.runModal() != .alertFirstButtonReturn   // proceed only on "Save Anyway"
     }
 
     private func saveConfig() {
@@ -768,8 +1283,8 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             return
         }
         saved = true
-        onSaved()
-        showSummary()
+        onSaved()       // reload, then hand off to Edit Menu as the final arranging step
+        window?.close()
     }
 
     private func shareToGitHub() {
@@ -781,18 +1296,45 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Actions
 
+    @objc private func includeExtrasChanged(_ sender: NSButton) {
+        includeAutoFilled = sender.state == .on
+        showSummary()   // refresh the listed extras
+    }
+
+    #if DEBUG
+    @objc private func copyTapped() {
+        CommunitySubmission.copyToClipboard(config: finalConfig(), capabilities: capabilitiesString)
+        copyButton?.title = "Copied ✓"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.copyButton?.title = "Copy" }
+    }
+    #endif
+
     @objc private func doneTapped() {
         window?.close()   // windowWillClose stops the session and clears the reference
     }
 
     @objc private func backTapped() {
-        // Navigate only — keep whatever was already learned so it's restored.
-        if index >= templates.count {           // on summary → back to last step
-            index = templates.count - 1
-        } else {
-            index = max(0, index - 1)
+        // Navigate only — keep whatever was already learned so it's restored. Skip
+        // over auto-accepted controls (they have no step).
+        let pending = pendingSteps
+        if onDiscovery {                          // discovery list → back to last step
+            onDiscovery = false
+            if let last = pending.last { index = last; showStep() }
+            return
         }
-        showStep()
+        if index >= templates.count {            // summary → discovery (if any) else last step
+            if let codes = discoverable, !codes.isEmpty {
+                pastDiscovery = false
+                showDiscovery(codes)
+            } else if let last = pending.last {
+                index = last; showStep()
+            }
+            return
+        }
+        if let pos = pending.firstIndex(of: index), pos > 0 {
+            index = pending[pos - 1]
+            showStep()
+        }
     }
 
     @objc private func skipTapped() {
@@ -842,7 +1384,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             let chosen = candidates[popup.indexOfSelectedItem]
             self.session.endLearning()
             let item = LearnedControl(template: template, code: chosen.code, max: 0,
-                                      options: self.cycleOptions(template, values: chosen.values, capsDiscrete: chosen.capsDiscrete))
+                                      options: self.cycleOptions(template, code: chosen.code, values: chosen.values, capsDiscrete: chosen.capsDiscrete))
             self.enterConfirm(item, current: chosen.current, auto: false)
         }
     }
@@ -855,22 +1397,34 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 index = templates.count         // we're on the final summary, not a step
                 showSummary()
             } else {
-                showStep()
+                autoAcceptThenStep()
             }
         } else if awaitingChoice {              // cycle detecting → pick from changes
             chooseManually()
         } else if index < templates.count {     // confirm the detected control
             if var item = pending {
-                if !labelingFields.isEmpty {    // commit the user's mode names
-                    item = LearnedControl(template: item.template, code: item.code,
-                                          max: item.max, options: labeledOptions())
+                // Start from the user's mode names if they labeled, else what we learned.
+                var options = labelingFields.isEmpty ? item.options : labeledOptions()
+                // Add/remove the HDR pseudo-option per the checkbox (Color Mode step).
+                if item.template.kind == .cycle, let cb = hdrOptionCheckbox {
+                    var list = (options ?? []).filter { !$0.hdr }
+                    if cb.state == .on { list.append(.init(value: 0, label: "HDR", hdr: true)) }
+                    options = list
+                }
+                if !labelingFields.isEmpty || hdrOptionCheckbox != nil {
+                    item = LearnedControl(template: item.template, code: item.code, max: item.max, options: options)
                 }
                 learned[index] = item
             }
             advance()
+        } else if onDiscovery {                  // "More controls" list → commit, then summary
+            commitDiscovery()
+            pastDiscovery = true
+            showSummary()
         } else if saved {                        // summary, after save
             shareToGitHub()
         } else {                                 // summary, before save
+            guard confirmDuplicateCodes() else { return }
             saveConfig()
         }
     }
@@ -891,6 +1445,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         testOptions = nil
         testValueLabel = nil
         labelingFields = []
+        hdrOptionCheckbox = nil
         pending = nil
         controlContainer?.subviews.forEach { $0.removeFromSuperview() }
     }

@@ -116,6 +116,11 @@ struct Control: Codable {
     /// e.g. Low Blue Light is unavailable in the sRGB color mode.
     var hideWhen: Condition? = nil
 
+    /// User chose to hide this control from the menu (via Edit Menu). Unlike
+    /// removal it's reversible — the control stays in the profile and can be shown
+    /// again. Distinct from `hideWhen`, which is conditional on another control.
+    var hidden: Bool? = nil
+
     struct Option: Codable {
         var value: HexValue? = nil // DDC value; nil for a system option (e.g. HDR)
         let label: String
@@ -211,9 +216,13 @@ enum MonitorConfigStore {
             at: userDirectory, includingPropertiesForKeys: nil) {
             urls += userFiles.filter { $0.pathExtension.lowercased() == "json" }
         }
+        // DEBUG: pretend we ship no profiles, so a monitor we'd normally recognize
+        // is treated as unrecognized — the experience a brand-new monitor gets.
+        #if !DEBUG
         if let bundled = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: nil) {
             urls += bundled
         }
+        #endif
 
         for url in urls {
             guard let data = try? Data(contentsOf: url),
@@ -228,6 +237,11 @@ enum MonitorConfigStore {
     /// wizard's auto-fill, so a user's own earlier (possibly wrong) profile can't
     /// feed its mistakes back in.
     static func loadBundled() -> [MonitorConfig] {
+        // DEBUG: act as if nothing ships bundled, so the Teach wizard gets no
+        // auto-fill or recognition — the genuine unrecognized-monitor flow.
+        #if DEBUG
+        return []
+        #else
         let decoder = JSONDecoder()
         let urls = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: nil) ?? []
         return urls.compactMap { url in
@@ -236,6 +250,7 @@ enum MonitorConfigStore {
                   !config.controls.isEmpty else { return nil }
             return config
         }
+        #endif
     }
 
     static func ensureUserDirectory() {

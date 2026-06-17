@@ -41,6 +41,10 @@ final class LearnSession {
         /// (authoritative). False when listed bare or absent — then the values are
         /// only what was observed, and a template's full set may be more complete.
         let capsDiscrete: Bool
+        /// True when the code is advertised in the capabilities string (not merely
+        /// readable). A spec control that's advertised is known for certain, so the
+        /// wizard can accept it without asking the user to confirm.
+        let inCaps: Bool
     }
 
     private let service: IOAVService
@@ -62,6 +66,8 @@ final class LearnSession {
     private var observed: [UInt8: Set<Int>] = [:]   // distinct values seen per code while teaching
     private var expectedKind: Control.Kind?         // the control being taught, to bias resolution
     private var expectedCode: UInt8?                // code a known profile expects for this control
+    private var excludedCodes: Set<UInt8> = []      // codes already committed to other controls (a
+                                                    // preset must not resolve onto e.g. brightness)
     private var onUpdate: ((LearnUpdate) -> Void)?
 
     /// A code must change at least this many times to be a candidate…
@@ -127,7 +133,8 @@ final class LearnSession {
             let result = present
                 ? Detected(code: code, max: max, current: reply.map { Int($0.current) } ?? 0,
                            values: (self.capabilities[code] ?? []).sorted(),
-                           capsDiscrete: !(self.capabilities[code]?.isEmpty ?? true))
+                           capsDiscrete: !(self.capabilities[code]?.isEmpty ?? true),
+                           inCaps: inCaps)
                 : nil
             DispatchQueue.main.async { completion(result) }
         }
@@ -137,10 +144,15 @@ final class LearnSession {
 
     /// Begin watching for the active control. Resets the tally; `onUpdate` fires
     /// on the main thread every sweep with progress, then once with `.learned`.
-    func beginLearning(expectedKind: Control.Kind, expectedCode: UInt8?, onUpdate: @escaping (LearnUpdate) -> Void) {
+    func beginLearning(expectedKind: Control.Kind, expectedCode: UInt8?,
+                       excludedCodes: Set<UInt8> = [], onUpdate: @escaping (LearnUpdate) -> Void) {
         let svc = service
         queue.async {
             self.expectedCode = expectedCode
+            // A code already committed to another control (or a standard register a
+            // preset perturbs as a side-effect) must never win — except the very code
+            // a known profile expects for THIS control.
+            self.excludedCodes = expectedCode.map { excludedCodes.subtracting([$0]) } ?? excludedCodes
             // Build the baseline now (the slow sweep) against the monitor's
             // current state, so changes during this window are detected cleanly.
             // Deferring it to here keeps the wizard's first step fast.
@@ -205,11 +217,77 @@ final class LearnSession {
         }
     }
 
+    /// The set of VCP codes the monitor advertised in its capabilities string.
+    /// Empty if the monitor didn't answer. Safe to call after prepare().
+    func capabilityCodes(completion: @escaping (Set<UInt8>) -> Void) {
+        queue.async {
+            let codes = Set(self.capabilities.keys)
+            DispatchQueue.main.async { completion(codes) }
+        }
+    }
+
+    /// Identify a proprietary cycle from the capabilities string alone, by matching
+    /// the template's known mode values against each advertised code's discrete value
+    /// set. A colour-mode register that advertises the BenQ preset values is
+    /// unmistakable — far more reliable than watching which code moves while the user
+    /// works the OSD (a preset perturbs brightness, night mode, etc.). Returns nil
+    /// when no code matches decisively, so the caller falls back to manual teaching.
+    func capsMatch(_ template: ControlTemplate, excluding: Set<UInt8>, completion: @escaping (Detected?) -> Void) {
+        queue.async {
+            let result = self.fingerprint(template, excluding: excluding)
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    private func fingerprint(_ template: ControlTemplate, excluding: Set<UInt8>) -> Detected? {
+        guard template.kind == .cycle, let opts = template.options, !opts.isEmpty else { return nil }
+        let wanted = Set(opts.map { $0.value })
+        var best: (code: UInt8, overlap: Int)?
+        for (code, vals) in capabilities where !vals.isEmpty && !excluding.contains(code) {
+            let overlap = Set(vals).intersection(wanted).count
+            if overlap >= 2, overlap > (best?.overlap ?? 1) { best = (code, overlap) }
+        }
+        guard let b = best else { return nil }
+        // Decisive only: the overlap must cover a majority of either the advertised
+        // values or the template's known modes, so a coincidental one- or two-value
+        // overlap with an unrelated register never wins.
+        let advertised = capabilities[b.code]?.count ?? 0
+        guard b.overlap * 2 >= advertised || b.overlap * 2 >= wanted.count else { return nil }
+        let vals = (capabilities[b.code] ?? []).sorted()
+        let reply = AppleSiliconDDC.read(service: service, command: b.code, numOfRetryAttemps: 1)
+        return Detected(code: b.code, max: reply?.max ?? 0,
+                        current: reply.map { Int($0.current) } ?? (vals.first ?? 0),
+                        values: vals, capsDiscrete: true, inCaps: true)
+    }
+
     /// The known profile this monitor distinctively matches, if any. Safe after prepare().
     func recognizedProfile(from configs: [MonitorConfig], completion: @escaping (MonitorConfig?) -> Void) {
         queue.async {
             let result = KnownProfileMatcher.recognizedProfile(from: configs, capabilities: self.capabilities)
             DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// Standard controls the monitor advertises that the guided templates didn't
+    /// already cover — for the optional "More controls" list. Only codes the VESA
+    /// MCCS spec defines as reliably-named, writable, non-destructive controls are
+    /// returned (so we never offer a code whose meaning is undefined or repurposed);
+    /// each comes with its standard name, whether it's a range, and its value list.
+    func discoverableCodes(excluding: Set<UInt8>,
+                           completion: @escaping ([(code: UInt8, name: String, continuous: Bool, values: [Int], max: UInt16)]) -> Void) {
+        let svc = service
+        queue.async {
+            let codes = self.capabilities.keys
+                .filter { MCCS.offerable($0) && !excluding.contains($0) }
+                .sorted()
+            let out = codes.map { code -> (code: UInt8, name: String, continuous: Bool, values: [Int], max: UInt16) in
+                let reply = AppleSiliconDDC.read(service: svc, command: code, numOfRetryAttemps: 1)
+                return (code: code, name: MCCS.name(code) ?? String(format: "0x%02X", code),
+                        continuous: MCCS.isContinuous(code),
+                        values: (self.capabilities[code] ?? []).sorted(),
+                        max: reply?.max ?? 0)
+            }
+            DispatchQueue.main.async { completion(out) }
         }
     }
 
@@ -260,7 +338,9 @@ final class LearnSession {
             let capsDiscrete = !(capabilities[code]?.isEmpty ?? true)
             DispatchQueue.main.async { callback?(.learned(code: code, max: max, current: current, values: values, capsDiscrete: capsDiscrete)) }
         } else {
-            let top = changeCount.max { $0.value < $1.value }
+            // Don't surface an excluded code (e.g. brightness moving under a preset)
+            // as the front-runner — it can never be the answer.
+            let top = changeCount.filter { !excludedCodes.contains($0.key) }.max { $0.value < $1.value }
             let leader = (top?.value ?? 0) > 0 ? top?.key : nil
             DispatchQueue.main.async { callback?(.detecting(leader: leader, count: top?.value ?? 0)) }
         }
@@ -275,7 +355,7 @@ final class LearnSession {
         // moving this one.
         if let code = expectedCode, (changeCount[code] ?? 0) >= requiredChanges { return code }
 
-        let candidates = changeCount.filter { $0.value >= requiredChanges }
+        let candidates = changeCount.filter { $0.value >= requiredChanges && !excludedCodes.contains($0.key) }
         guard !candidates.isEmpty else { return nil }
 
         if expectedKind == .cycle { return resolveCycle(Array(candidates.keys)) }

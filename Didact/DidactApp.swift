@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var active: DisplayController?
     private var listenWindow: ListenWindowController?
     private var teachWindow: TeachWizardWindowController?
+    private var menuEditorWindow: MenuEditorWindowController?
     /// Visibility snapshot (hidden control stateKeys) frozen while the menu is open,
     /// so a post-open value refresh can't change the row set and jump the height.
     private var frozenHidden: Set<String>?
@@ -175,8 +176,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         displays = controllers
-        if let active, displays.contains(where: { $0.displayID == active.displayID }) {
-            // keep current selection
+        // Keep the same display selected, but adopt the freshly-built controller so
+        // a reloaded/edited config takes effect (the old controller holds the old
+        // config). Fall back to the first display when the selection is gone.
+        if let current = active, let same = displays.first(where: { $0.displayID == current.displayID }) {
+            active = same
         } else {
             active = displays.first
         }
@@ -245,12 +249,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Flat list of controls. Both `group` and `section` boundaries become a
         // separator — but only if real controls precede it, so there are never
         // leading or doubled dividers. No text headings: plain macOS menu.
+        let displayLabels = Self.menuDisplayLabels(active.config.controls)
         var addedSinceSeparator = false
         for control in active.config.controls {
             // Use the frozen snapshot while the menu is open so a post-open refresh
             // can't change which rows are present (and jump the height).
+            if control.hidden == true { continue }   // user-hidden via Edit Menu
             let hidden = frozenHidden?.contains(control.stateKey) ?? active.isHidden(control)
             if !control.isHeader && hidden { continue }
+            // Drop a redundant prefix shared with a sibling in the group (so
+            // "Moon Halo Brightness" reads as "Brightness" under the Moon Halo divider).
+            var control = control
+            if let shorter = displayLabels[control.stateKey] { control.label = shorter }
             switch control.kind {
             case .group, .section:
                 if addedSinceSeparator {
@@ -268,6 +278,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         addAppMenu(to: menu)
+    }
+
+    /// Display labels that drop a prefix shared with a sibling in the same group —
+    /// e.g. "Moon Halo Brightness" → "Brightness" when it sits in the Moon Halo group
+    /// next to "Moon Halo". Keyed by stateKey; cosmetic only (the saved label is
+    /// unchanged). Groups are the spans between header/divider entries.
+    private static func menuDisplayLabels(_ controls: [Control]) -> [String: String] {
+        var result: [String: String] = [:]
+        var group: [Control] = []
+        func flush() {
+            let labels = group.compactMap(\.label)
+            for c in group {
+                guard let label = c.label,
+                      let parent = labels
+                        .filter({ $0 != label && label.hasPrefix($0 + " ") })
+                        .max(by: { $0.count < $1.count }) else { continue }
+                let stripped = String(label.dropFirst(parent.count + 1))
+                if !stripped.isEmpty { result[c.stateKey] = stripped }
+            }
+            group.removeAll()
+        }
+        for c in controls {
+            if c.isHeader { flush() } else { group.append(c) }
+        }
+        flush()
+        return result
     }
 
     private func rangeItem(_ control: Control, active: DisplayController, inset: CGFloat) -> NSMenuItem {
@@ -369,7 +405,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Add / share monitor support. Teach is always enabled (its purpose is to
         // support a monitor that matches no config yet); the others need a display.
-        add("Set Up This Monitor…", #selector(openTeach))
+        add("Set Up This Monitor…", #selector(openTeach), key: "s")
+        add("Edit Menu…", #selector(openMenuEditor), enabled: activeHasUserProfile())
         add("Submit to Community…", #selector(openSubmit), enabled: activeHasUserProfile())
         // Raw VCP change log — a developer diagnostic, not needed by end users now
         // that the Teach wizard exists. Debug builds only.
@@ -531,6 +568,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .contains { $0.service != nil }
     }
 
+    @objc private func openMenuEditor() {
+        guard let active else { return }
+        if menuEditorWindow == nil {
+            menuEditorWindow = MenuEditorWindowController(
+                config: active.config,
+                onSaved: { [weak self] _ in self?.reloadConfigs() },
+                onClose: { [weak self] in
+                    self?.menuEditorWindow = nil
+                    NSApp.setActivationPolicy(.accessory)
+                })
+        }
+        NSApp.setActivationPolicy(.regular)   // show in Dock while the editor is open
+        menuEditorWindow?.show()
+    }
+
     @objc private func openSubmit() {
         guard let active else { return }
         // Read the live capabilities dump to include with the profile, then submit.
@@ -569,9 +621,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if teachWindow == nil {
             teachWindow = TeachWizardWindowController(
                 monitorName: name, session: session, knownConfigs: MonitorConfigStore.loadBundled(), edid: edid,
-                onSaved: { [weak self] in self?.reloadConfigs() },
-                onClose: { [weak self] in self?.teachWindow = nil })
+                displayID: displayID,
+                onSaved: { [weak self] in
+                    self?.reloadConfigs()
+                    self?.openMenuEditor()   // final step: arrange/hide/group the menu
+                },
+                onClose: { [weak self] in
+                    self?.teachWindow = nil
+                    // Back to a menu-bar-only agent — unless the editor just opened.
+                    if self?.menuEditorWindow == nil { NSApp.setActivationPolicy(.accessory) }
+                })
         }
+        // The wizard is a real window the user works in — show a Dock icon while it's
+        // open so it can be ⌘-Tabbed to, then drop back to .accessory on close.
+        NSApp.setActivationPolicy(.regular)
         teachWindow?.show()
     }
 

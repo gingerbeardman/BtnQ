@@ -31,10 +31,27 @@ enum KnownProfileMatcher {
             let perfect = coded.filter { isPerfectMatch($0, capabilities) }
             guard !perfect.isEmpty else { continue }   // never trust a profile we can't anchor
 
+            // A profile is trusted for its MODEL-SPECIFIC controls — ones with
+            // conditional logic (hideWhen/disableWhen) or values we can't verify by
+            // read-back (noRead/noVerify), plus the unverifiable companions below —
+            // only when it matches DISTINCTIVELY: a vendor-range cycle/toggle, not the
+            // universal codes every monitor shares. Without that, a bare standard code
+            // (e.g. a continuous 0xE5) would drag in another model's "Sensitivity"
+            // and its hideWhen wholesale.
+            let distinctive = isDistinctiveMatch(perfect)
+
             for control in perfect where byKey[control.stateKey] == nil {
+                // Generic universal controls (a standard MCCS code, no conditions)
+                // import freely. Anything keyed to a vendor code or carrying model-
+                // specific logic imports only when we recognize the monitor — so a
+                // bare standard code can't drag in another model's vendor controls.
+                if !isGeneric(control) && !distinctive { continue }
                 byKey[control.stateKey] = control
             }
-            // Anchored companions the dump can't verify directly.
+            // Anchored companions the dump can't verify directly — only when the
+            // profile is the monitor (distinctive), so a generic-only match can't
+            // import another model's bare cycles or multiplexed registers.
+            guard distinctive else { continue }
             for control in coded where !isPerfectMatch(control, capabilities) {
                 guard let code = control.featureCode, capabilities[code] != nil,
                       byKey[control.stateKey] == nil else { continue }
@@ -44,6 +61,28 @@ enum KnownProfileMatcher {
             }
         }
         return Array(byKey.values)
+    }
+
+    /// A control whose correctness depends on the specific model: conditional logic
+    /// keyed to other registers, or values that can't be confirmed by read-back.
+    /// Safe to auto-fill only from a profile we recognize distinctively.
+    private static func isModelSpecific(_ c: Control) -> Bool {
+        c.hideWhen != nil || c.disableWhen != nil || c.noRead == true || c.noVerify == true
+    }
+
+    /// A control safe to import on any anchored profile: a standard MCCS code
+    /// (< 0xC0) with spec-defined meaning and no model-specific quirks. Vendor-code
+    /// controls (≥ 0xC0) are model-specific by nature even without conditions.
+    private static func isGeneric(_ c: Control) -> Bool {
+        (c.featureCode ?? 0xFF) < 0xC0 && !isModelSpecific(c)
+    }
+
+    /// A distinctive anchor: a perfectly-matched vendor-range (≥0xC0) cycle/toggle,
+    /// not the universal brightness/contrast/input codes every monitor shares.
+    private static func isDistinctiveMatch(_ perfect: [Control]) -> Bool {
+        perfect.contains {
+            ($0.kind == .cycle || $0.kind == .toggle) && ($0.featureCode ?? 0) >= 0xC0
+        }
     }
 
     /// The known profile this monitor *is*, if the capabilities dump confirms it
@@ -61,10 +100,7 @@ enum KnownProfileMatcher {
             // Require a distinctive anchor: a vendor-code cycle/toggle whose value
             // set matched. Standard codes alone (present on every monitor) must not
             // trigger a false recognition.
-            let distinctive = perfect.contains {
-                ($0.kind == .cycle || $0.kind == .toggle) && ($0.featureCode ?? 0) >= 0xC0
-            }
-            guard distinctive, perfect.count > (best?.score ?? 0) else { continue }
+            guard isDistinctiveMatch(perfect), perfect.count > (best?.score ?? 0) else { continue }
             best = (config, perfect.count)
         }
         return best?.config
@@ -75,7 +111,12 @@ enum KnownProfileMatcher {
         guard control.byte == nil, control.channel == nil else { return false }   // can't verify multiplexed
         switch control.kind {
         case .range:
-            return values.isEmpty                                   // continuous feature
+            // A continuous feature, or a stepped range whose advertised steps all
+            // fall within the profile's declared span (e.g. Night Level d0 = 1…10
+            // advertised as D0(01…0A)). Enumerated steps don't make it not-a-range.
+            if values.isEmpty { return true }
+            let lo = control.min ?? 0, hi = control.max ?? Int.max
+            return values.allSatisfy { $0 >= lo && $0 <= hi }
         case .cycle:
             let options = Set((control.options ?? []).compactMap { $0.value?.value })
             return !values.isEmpty && options == Set(values)

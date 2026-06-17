@@ -14,10 +14,9 @@ import AppKit
 enum CommunitySubmission {
     private static let newIssueBase = "https://github.com/gingerbeardman/Didact/issues/new"
 
-    /// Returns true if the issue was opened pre-filled, false if it fell back to a
-    /// bare issue (body on the clipboard only).
-    @discardableResult
-    static func submit(config: MonitorConfig, capabilities: String?) -> Bool {
+    /// The shareable body: the profile JSON plus the raw capabilities dump, in the
+    /// Markdown shape a GitHub issue (or a paste to a maintainer) expects.
+    static func payload(config: MonitorConfig, capabilities: String?) -> String {
         // Minified (not pretty-printed): pretty JSON triples in size once
         // URL-encoded (~10.7 KB vs ~4.5 KB) and blows past GitHub's pre-fill
         // limit. Compact keeps config + capabilities under it so the body fills.
@@ -25,7 +24,7 @@ enum CommunitySubmission {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let json = (try? encoder.encode(config)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let caps = capabilities ?? "(monitor returned no capabilities string)"
-        let body = """
+        return """
         Sharing a monitor profile for **\(config.name)** so others with this monitor can use it.
 
         Profile:
@@ -40,6 +39,19 @@ enum CommunitySubmission {
         \(caps)
         ```
         """
+    }
+
+    /// Copy the shareable body to the clipboard without opening anything.
+    static func copyToClipboard(config: MonitorConfig, capabilities: String?) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(payload(config: config, capabilities: capabilities), forType: .string)
+    }
+
+    /// Returns true if the issue was opened pre-filled, false if it fell back to a
+    /// bare issue (body on the clipboard only).
+    @discardableResult
+    static func submit(config: MonitorConfig, capabilities: String?) -> Bool {
+        let body = payload(config: config, capabilities: capabilities)
 
         // Always put it on the clipboard — the reliable channel.
         NSPasteboard.general.clearContents()

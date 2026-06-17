@@ -23,6 +23,9 @@ struct ControlTemplate {
     struct OptionTemplate {
         let value: Int
         let label: String
+        /// A pseudo-option that toggles macOS system HDR rather than writing DDC.
+        /// `value` is unused when set.
+        var hdr = false
     }
 
     let label: String
@@ -49,6 +52,9 @@ struct ControlTemplate {
     // quirks carried straight into the generated Control
     var noRead = false
     var noVerify = false
+    /// Emit `hideWhen: {system: "hdr"}` — DDC brightness/contrast are ignored while
+    /// macOS HDR is active, so the slider would otherwise read as a dead control.
+    var hideWhenHDR = false
 
     /// What to tell the user to do during the manual teach step.
     let action: String
@@ -57,11 +63,11 @@ struct ControlTemplate {
         // ── Universal (standard MCCS) ─────────────────────────────────────────
         ControlTemplate(
             label: "Brightness", kind: .range, tier: .universal, standardCode: 0x10,
-            suggestedMin: 0, fallbackMax: 100,
+            suggestedMin: 0, fallbackMax: 100, hideWhenHDR: true,
             action: "change Brightness up and down"),
         ControlTemplate(
             label: "Contrast", kind: .range, tier: .universal, standardCode: 0x12,
-            suggestedMin: 0, fallbackMax: 100,
+            suggestedMin: 0, fallbackMax: 100, hideWhenHDR: true,
             action: "change Contrast up and down"),
         ControlTemplate(
             label: "Volume", kind: .range, tier: .universal, standardCode: 0x62,
